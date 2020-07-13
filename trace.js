@@ -3,6 +3,34 @@
 const chain = require('stack-chain');
 const asyncHook = require('async_hooks');
 
+// We must take a copy of the CallSite objects to avoid retaining references to Promises.
+// If we retain a Promise reference then asyncDestroy for the Promise won't be called,
+// so we'll leak memory.
+class CallSiteClone {
+  constructor(callSite) {
+    this._fileName = callSite.getFileName();
+    this._lineNumber = callSite.getLineNumber();
+    this._columnNumber = callSite.getColumnNumber();
+    this._toString = callSite.toString(); // TODO this is slow
+  }
+
+  getFileName() {
+    return this._fileName;
+  }
+
+  getLineNumber() {
+    return this._lineNumber;
+  }
+
+  getColumnNumber() {
+    return this._columnNumber;
+  }
+
+  toString() {
+    return this._toString;
+  }
+}
+
 // Contains init asyncId of the active scope(s)
 // Because we can't know when the root scope ends, a permanent Set is keept
 // for the root scope.
@@ -11,46 +39,22 @@ let executionScopeDepth = 0;
 // Contains the call site objects of all active scopes
 const traces = new Map();
 
-//
-// Mainiputlate stack trace
-//
-// add lastTrace to the callSite array
-chain.filter.attach(function (error, frames) {
-  return frames.filter(function (callSite) {
-    const name = callSite && callSite.getFileName();
-    return (!name || (name !== 'async_hooks.js' && name !== 'internal/async_hooks.js'));
-  });
-});
-
-chain.extend.attach(function (error, frames) {
-  const lastTrace = traces.get(asyncHook.executionAsyncId());
-  frames.push.apply(frames, lastTrace);
-  return frames;
-});
-
-//
-// Track handle objects
-//
-const hooks = asyncHook.createHook({
-  init: asyncInit,
-  before: asyncBefore,
-  after: asyncAfter,
-  destroy: asyncDestroy
-});
-hooks.enable();
+function cloneCallSite(callSite) {
+  return new CallSiteClone(callSite);
+}
 
 function getCallSites(skip) {
   const limit = Error.stackTraceLimit;
 
   Error.stackTraceLimit = limit + skip;
-  const stack = chain.callSite({
+  const callSites = chain.callSite({
     extend: false,
     filter: true,
     slice: skip
   });
   Error.stackTraceLimit = limit;
 
-  return stack;
+  return callSites.map(cloneCallSite);
 }
 
 function equalCallSite(a, b) {
@@ -123,3 +127,31 @@ function asyncAfter(asyncId) {
 function asyncDestroy(asyncId) {
   traces.delete(asyncId);
 }
+
+//
+// Mainiputlate stack trace
+//
+// add lastTrace to the callSite array
+chain.filter.attach(function (error, frames) {
+  return frames.filter(function (callSite) {
+    const name = callSite && callSite.getFileName();
+    return (!name || (name !== 'async_hooks.js' && name !== 'internal/async_hooks.js'));
+  });
+});
+
+chain.extend.attach(function (error, frames) {
+  const lastTrace = traces.get(asyncHook.executionAsyncId());
+  frames.push.apply(frames, lastTrace);
+  return frames;
+});
+
+//
+// Track handle objects
+//
+const hooks = asyncHook.createHook({
+  init: asyncInit,
+  before: asyncBefore,
+  after: asyncAfter,
+  destroy: asyncDestroy
+});
+hooks.enable();
