@@ -23,10 +23,11 @@
     "stack-chain": "^2.0.0"
   },
   "devDependencies": {
-    "interpreted": "^0.6.0",
-    "execspawn": "^1.0.1",
-    "endpoint": "^0.4.0",
     "clarify": "^2.0.0",
+    "endpoint": "^0.4.0",
+    "eslint": "^7.16.0",
+    "execspawn": "^1.0.1",
+    "interpreted": "^0.6.0",
     "summary": "^0.3.0",
     "tap": "^11.0.0"
   },

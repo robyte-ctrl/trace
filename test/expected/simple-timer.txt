@@ -7,7 +7,7 @@ Error: trace
     at ontimeout (timers.js:r:c)
     at tryOnTimeout (timers.js:r:c)
     at listOnTimeout (timers.js:r:c)
-    at processTimers (timers.js:r:c)
+    at Timer.processTimers (timers.js:r:c)
     at initAsyncResource (internal/timers.js:r:c)
     at new Timeout (internal/timers.js:r:c)
     at setTimeout (timers.js:r:c)

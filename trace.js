@@ -3,44 +3,45 @@
 const chain = require('stack-chain');
 const asyncHook = require('async_hooks');
 
-// We must take a copy of the CallSite objects to avoid retaining references to Promises.
-// If we retain a Promise reference then asyncDestroy for the Promise won't be called,
-// so we'll leak memory.
-class CallSiteClone {
-  constructor(callSite) {
-    this._fileName = callSite.getFileName();
-    this._lineNumber = callSite.getLineNumber();
-    this._columnNumber = callSite.getColumnNumber();
-    this._toString = callSite.toString(); // TODO this is slow
+class WeakRef {
+  constructor(value) {
+    this._weakMap = new WeakMap([[this, value]]);
   }
 
-  getFileName() {
-    return this._fileName;
-  }
-
-  getLineNumber() {
-    return this._lineNumber;
-  }
-
-  getColumnNumber() {
-    return this._columnNumber;
-  }
-
-  toString() {
-    return this._toString;
+  deref() {
+    return this._weakMap.get(this);
   }
 }
 
+function WeakProxy(value, handler) {
+  return new Proxy(
+    new WeakRef(value), handler || {
+      get(target, property/*, receiver*/) {
+        const object = target.deref();
+        if (!object) {
+          return undefined;
+        }
+
+        const value = object[property];
+
+        return typeof value === 'function'
+          ? value.bind(object)
+          : value;
+      }
+    }
+  );
+}
+
 // Contains init asyncId of the active scope(s)
-// Because we can't know when the root scope ends, a permanent Set is keept
-// for the root scope.
+// Because we can't know when the root scope ends,
+// a permanent Set is kept for the it.
 const executionScopeInits = new Set();
 let executionScopeDepth = 0;
 // Contains the call site objects of all active scopes
 const traces = new Map();
 
 function cloneCallSite(callSite) {
-  return new CallSiteClone(callSite);
+  return new WeakProxy(callSite);
 }
 
 function getCallSites(skip) {
@@ -71,7 +72,7 @@ function equalCallSite(a, b) {
           aColumn === b.getColumnNumber());
 }
 
-function asyncInit(asyncId, type, triggerAsyncId, resource) {
+function asyncInit(asyncId, type, triggerAsyncId/*, resource*/) {
   const trace = getCallSites(2);
 
   // In cases where the trigger is in the same synchronous execution scope
@@ -83,7 +84,7 @@ function asyncInit(asyncId, type, triggerAsyncId, resource) {
   // The async stack trace should be: root, p0, p1
   //
   // To avoid (n^2) string matching, it is assumed that `Error.stackTraceLimit`
-  // hasn't changed. By this assumtion we know the current trace will go beyond
+  // hasn't changed. By this assumption we know the current trace will go beyond
   // the trigger trace, thus the check can be limited to trace[-1].
   if (executionScopeInits.has(triggerAsyncId)) {
     const parentTrace = traces.get(triggerAsyncId);
@@ -96,7 +97,7 @@ function asyncInit(asyncId, type, triggerAsyncId, resource) {
     }
   }
 
-  // Add all the callSites from previuse ticks
+  // Add all the callSites from previous ticks
   if (triggerAsyncId !== 0) {
     trace.push.apply(trace, traces.get(triggerAsyncId));
   }
@@ -113,14 +114,14 @@ function asyncInit(asyncId, type, triggerAsyncId, resource) {
   executionScopeInits.add(asyncId);
 }
 
-function asyncBefore(asyncId) {
+function asyncBefore(/*asyncId*/) {
   if (executionScopeDepth === 0) {
     executionScopeInits.clear();
   }
   executionScopeDepth += 1;
 }
 
-function asyncAfter(asyncId) {
+function asyncAfter(/*asyncId*/) {
   executionScopeDepth -= 1;
 }
 
@@ -129,7 +130,7 @@ function asyncDestroy(asyncId) {
 }
 
 //
-// Mainiputlate stack trace
+// Manipulate stack trace
 //
 // add lastTrace to the callSite array
 chain.filter.attach(function (error, frames) {
@@ -140,8 +141,12 @@ chain.filter.attach(function (error, frames) {
 });
 
 chain.extend.attach(function (error, frames) {
-  const lastTrace = traces.get(asyncHook.executionAsyncId());
+  const id = asyncHook.executionAsyncId();
+
+  const lastTrace = traces.get(id);
+
   frames.push.apply(frames, lastTrace);
+
   return frames;
 });
 
